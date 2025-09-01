@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>GitDoom 1.0</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    canvas { display: block; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+</head>
+<body>
+<script>
+  // --- Сцена и камера ---
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // --- Свет ---
+  const light = new THREE.PointLight(0xffffff, 1, 100);
+  light.position.set(0, 10, 0);
+  scene.add(light);
+
+  // --- Загрузка текстур (ставишь свои позже) ---
+  const loader = new THREE.TextureLoader();
+  const floorTex = loader.load("textures/floor.jpg"); // замени на свою текстуру
+  const wallTex = loader.load("textures/wall.jpg");   // замени на свою текстуру
+  const enemyTex = loader.load("textures/enemy.png"); // прозрачный PNG врага
+
+  // --- Пол ---
+  const floorGeo = new THREE.PlaneGeometry(200, 200);
+  const floorMat = new THREE.MeshBasicMaterial({ map: floorTex });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI/2;
+  scene.add(floor);
+
+  // --- Стены ---
+  function makeWall(x, z) {
+    const geo = new THREE.BoxGeometry(10, 5, 1);
+    const mat = new THREE.MeshBasicMaterial({ map: wallTex });
+    const wall = new THREE.Mesh(geo, mat);
+    wall.position.set(x, 2.5, z);
+    scene.add(wall);
+  }
+
+  // Простейшая карта стен
+  makeWall(0, -10);
+  makeWall(10, -20);
+  makeWall(-10, -20);
+  makeWall(20, -5);
+  makeWall(-20, -5);
+
+  // --- Враги ---
+  function makeEnemy(x, z) {
+    const mat = new THREE.SpriteMaterial({ map: enemyTex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(3, 3, 1);
+    sprite.position.set(x, 1.5, z);
+    scene.add(sprite);
+    return sprite;
+  }
+
+  const enemies = [
+    makeEnemy(0, -15),
+    makeEnemy(5, -25),
+    makeEnemy(-5, -30)
+  ];
+
+  // --- Камера (игрок) ---
+  camera.position.set(0, 2, 5);
+
+  // --- Управление клавиатурой ---
+  const keys = {};
+  document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+  document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+  // --- Управление мышью ---
+  let yaw = 0;
+  let pitch = 0;
+  document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock;
+  document.body.onclick = () => document.body.requestPointerLock();
+  document.addEventListener("mousemove", e => {
+    if (document.pointerLockElement === document.body) {
+      yaw -= e.movementX * 0.002;
+      pitch -= e.movementY * 0.002;
+      pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+    }
+  });
+
+  // --- Основной цикл ---
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const speed = 0.2;
+    const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+    if (keys["w"]) camera.position.add(forward.clone().multiplyScalar(-speed));
+    if (keys["s"]) camera.position.add(forward.clone().multiplyScalar(speed));
+    if (keys["a"]) camera.position.add(right.clone().multiplyScalar(-speed));
+    if (keys["d"]) camera.position.add(right.clone().multiplyScalar(speed));
+
+    camera.rotation.set(pitch, yaw, 0);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // --- Подстройка под окно ---
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
