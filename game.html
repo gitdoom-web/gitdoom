@@ -1,120 +1,222 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>GitDoom 1.0</title>
-  <style>
-    body { margin: 0; overflow: hidden; background: black; }
-    canvas { display: block; }
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<meta charset="UTF-8">
+<title>Raycasting DOOM Demo</title>
+<style>
+  body { margin:0; overflow:hidden; background:#111; }
+  canvas { display:block; }
+  #health {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 200px;
+    height: 25px;
+    background: #333;
+    border: 2px solid #fff;
+  }
+  #health-bar {
+    width: 100%;
+    height: 100%;
+    background: #0f0;
+  }
+  #killText {
+    position: absolute;
+    top: 60px;
+    left: 20px;
+    color: #fff;
+    font-size: 18px;
+    font-family: sans-serif;
+  }
+</style>
 </head>
 <body>
+<canvas id="game"></canvas>
+<div id="health"><div id="health-bar"></div></div>
+<div id="killText">Killed: 0</div>
 <script>
-  // --- Сцена и камера ---
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-  const renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-  // --- Свет ---
-  const light = new THREE.PointLight(0xffffff, 1, 100);
-  light.position.set(0, 10, 0);
-  scene.add(light);
+// Мини-карта
+let map = [
+  [1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,0,1,0,1,0,1,0,0,1],
+  [1,0,1,0,1,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,0,1,1,1,1,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,1],
+  [1,1,1,1,1,1,1,1,1,1],
+];
 
-  // --- Загрузка текстур (ставишь свои позже) ---
-  const loader = new THREE.TextureLoader();
-  const floorTex = loader.load("textures/floor.jpg"); // замени на свою текстуру
-  const wallTex = loader.load("textures/wall.jpg");   // замени на свою текстуру
-  const enemyTex = loader.load("textures/enemy.png"); // прозрачный PNG врага
+const tileSize = 64;
+let player = { x: 160, y: 160, angle: 0, health: 100 };
 
-  // --- Пол ---
-  const floorGeo = new THREE.PlaneGeometry(200, 200);
-  const floorMat = new THREE.MeshBasicMaterial({ map: floorTex });
-  const floor = new THREE.Mesh(floorGeo, floorMat);
-  floor.rotation.x = -Math.PI/2;
-  scene.add(floor);
+const keys = {};
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()]=true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()]=false);
 
-  // --- Стены ---
-  function makeWall(x, z) {
-    const geo = new THREE.BoxGeometry(10, 5, 1);
-    const mat = new THREE.MeshBasicMaterial({ map: wallTex });
-    const wall = new THREE.Mesh(geo, mat);
-    wall.position.set(x, 2.5, z);
-    scene.add(wall);
+const bullets = [];
+canvas.addEventListener("mousedown", e => {
+  if(e.button === 0){
+    bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 5 });
   }
+});
 
-  // Простейшая карта стен
-  makeWall(0, -10);
-  makeWall(10, -20);
-  makeWall(-10, -20);
-  makeWall(20, -5);
-  makeWall(-20, -5);
+// Загружаем текстуры
+const wallImg = new Image(); wallImg.src = "textures/wall.png";
+const floorImg = new Image(); floorImg.src = "textures/floor.png";
+const enemyImg = new Image(); enemyImg.src = "textures/enemy.png";
 
-  // --- Враги ---
-  function makeEnemy(x, z) {
-    const mat = new THREE.SpriteMaterial({ map: enemyTex, transparent: true });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(3, 3, 1);
-    sprite.position.set(x, 1.5, z);
-    scene.add(sprite);
-    return sprite;
-  }
+let killCount = 0;
+const killTextDiv = document.getElementById("killText");
 
-  const enemies = [
-    makeEnemy(0, -15),
-    makeEnemy(5, -25),
-    makeEnemy(-5, -30)
-  ];
-
-  // --- Камера (игрок) ---
-  camera.position.set(0, 2, 5);
-
-  // --- Управление клавиатурой ---
-  const keys = {};
-  document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-  document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-
-  // --- Управление мышью ---
-  let yaw = 0;
-  let pitch = 0;
-  document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock;
-  document.body.onclick = () => document.body.requestPointerLock();
-  document.addEventListener("mousemove", e => {
-    if (document.pointerLockElement === document.body) {
-      yaw -= e.movementX * 0.002;
-      pitch -= e.movementY * 0.002;
-      pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+// Функция респавна врага
+function respawnEnemy(e){
+  let emptyCells = [];
+  for(let y=0; y<map.length; y++){
+    for(let x=0; x<map[y].length; x++){
+      if(map[y][x] === 0) emptyCells.push({x, y});
     }
-  });
-
-  // --- Основной цикл ---
-  function animate() {
-    requestAnimationFrame(animate);
-
-    const speed = 0.2;
-    const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-
-    if (keys["w"]) camera.position.add(forward.clone().multiplyScalar(-speed));
-    if (keys["s"]) camera.position.add(forward.clone().multiplyScalar(speed));
-    if (keys["a"]) camera.position.add(right.clone().multiplyScalar(-speed));
-    if (keys["d"]) camera.position.add(right.clone().multiplyScalar(speed));
-
-    camera.rotation.set(pitch, yaw, 0);
-
-    renderer.render(scene, camera);
   }
+  if(emptyCells.length === 0) return;
+  const cell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+  e.x = cell.x*tileSize + tileSize/2;
+  e.y = cell.y*tileSize + tileSize/2;
+  e.alive = true;
+}
 
-  animate();
+// Создаем врагов
+let enemies = [
+  { x: 400, y: 200, speed: 1, alive: true, size:48, name:"Enemy1" },
+  { x: 500, y: 400, speed: 1.2, alive: true, size:48, name:"Enemy2" }
+];
 
-  // --- Подстройка под окно ---
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth/window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
+function castRays() {
+  const numRays = canvas.width;
+  const fov = Math.PI/3;
+  const angleStep = fov / numRays;
+
+  for(let i=0; i<numRays; i++){
+    const rayAngle = player.angle - fov/2 + i*angleStep;
+    let distance = 0;
+    let hit = false;
+    let x = player.x;
+    let y = player.y;
+
+    while(!hit && distance < 1000){
+      distance += 1;
+      x = player.x + Math.cos(rayAngle)*distance;
+      y = player.y + Math.sin(rayAngle)*distance;
+
+      const mapX = Math.floor(x / tileSize);
+      const mapY = Math.floor(y / tileSize);
+      if(map[mapY][mapX] === 1) hit = true;
+    }
+
+    const correctedDistance = distance * Math.cos(rayAngle - player.angle);
+    const wallHeight = (tileSize*canvas.height)/correctedDistance;
+
+    ctx.drawImage(
+      wallImg,
+      0,0, wallImg.width, wallImg.height,
+      i, canvas.height/2 - wallHeight/2, 1, wallHeight
+    );
+  }
+}
+
+function updatePlayer() {
+  const speed = 2;
+  let nextX = player.x;
+  let nextY = player.y;
+  if(keys["w"]){ nextX += Math.cos(player.angle)*speed; nextY += Math.sin(player.angle)*speed; }
+  if(keys["s"]){ nextX -= Math.cos(player.angle)*speed; nextY -= Math.sin(player.angle)*speed; }
+  if(keys["a"]){ player.angle -= 0.03; }
+  if(keys["d"]){ player.angle += 0.03; }
+
+  const mapX = Math.floor(nextX/tileSize);
+  const mapY = Math.floor(nextY/tileSize);
+  if(map[mapY][mapX] === 0){ player.x = nextX; player.y = nextY; }
+}
+
+function updateBullets() {
+  for(let i=bullets.length-1; i>=0; i--){
+    let b = bullets[i];
+    b.x += Math.cos(b.angle)*b.speed;
+    b.y += Math.sin(b.angle)*b.speed;
+
+    const mapX = Math.floor(b.x / tileSize);
+    const mapY = Math.floor(b.y / tileSize);
+    if(map[mapY][mapX] === 1){ bullets.splice(i,1); continue; }
+
+    for(let e of enemies){
+      if(e.alive && Math.hypot(e.x - b.x, e.y - b.y) < e.size/2){
+        e.alive = false;
+        bullets.splice(i,1);
+        killCount++;
+        killTextDiv.innerText = "Killed: " + killCount + " (" + e.name + ")";
+        // Респавн через 5 секунд
+        setTimeout(()=>respawnEnemy(e), 5000);
+        break;
+      }
+    }
+
+    ctx.fillStyle = "#ffff00";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function updateEnemies() {
+  for(let e of enemies){
+    if(!e.alive) continue;
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    if(dist > 0){
+      e.x += dx/dist * e.speed;
+      e.y += dy/dist * e.speed;
+    }
+    if(dist < 30){
+      player.health -= 0.5;
+      if(player.health < 0) player.health = 0;
+    }
+    ctx.drawImage(enemyImg, e.x - e.size/2, e.y - e.size/2, e.size, e.size);
+  }
+}
+
+function updateHealthBar() {
+  const bar = document.getElementById("health-bar");
+  bar.style.width = player.health + "%";
+  if(player.health > 60) bar.style.background = "#0f0";
+  else if(player.health > 30) bar.style.background = "#ff0";
+  else bar.style.background = "#f00";
+}
+
+function gameLoop() {
+  ctx.fillStyle = "#333";
+  ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
+  ctx.fillStyle = "#666";
+  ctx.fillRect(0,0,canvas.width,canvas.height/2);
+
+  updatePlayer();
+  castRays();
+  updateBullets();
+  updateEnemies();
+  updateHealthBar();
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+window.addEventListener('resize', ()=>{
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+});
 </script>
 </body>
 </html>
